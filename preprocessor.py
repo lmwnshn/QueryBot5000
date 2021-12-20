@@ -1,4 +1,3 @@
-import glob
 import re
 import time
 from typing import List
@@ -315,7 +314,20 @@ class Preprocessor:
 
         return query_series.parallel_apply(parse)
 
-    def __init__(self, csvlogs):
+    def _from_csvlogs(self, csvlogs):
+        """
+        Glue code for initializing the Preprocessor from CSVLOGs.
+
+        Parameters
+        ----------
+        csvlogs : List[str]
+            List of PostgreSQL CSVLOG files.
+
+        Returns
+        -------
+        df : pd.DataFrame
+            A dataframe representing the query log.
+        """
         time_end, time_start = None, time.perf_counter()
 
         def clock(label):
@@ -345,7 +357,26 @@ class Preprocessor:
             pd.DataFrame(parsed.tolist(), index=df.index)
         clock('Parse query')
 
-        print('Groupby seconds', end='', flush=True)
+        return df
+
+    def __init__(self, csvlogs=None, hdf_path=None):
+        """
+        Initialize the preprocessor with either CSVLOGs or a HDF dataframe.
+
+        Parameters
+        ----------
+        csvlogs : List[str] | None
+            List of PostgreSQL CSVLOG files.
+
+        hdf_path : str | None
+            Path to a .h5 file containing a Preprocessor's get_dataframe().
+        """
+        if csvlogs is not None:
+            df = self._from_csvlogs(csvlogs)
+        else:
+            assert hdf_path is not None
+            df = pd.read_hdf(hdf_path, key='df')
+
         # Round all times to the closest second.
         df['log_time_s'] = df['log_time'].round('S')
         # Group the data by query template and log time.
@@ -354,9 +385,7 @@ class Preprocessor:
         grouped_by_sec = pd.DataFrame(gbs, columns=['count'])
         # Drop empty strings which represent irrelevant query log entries.
         grouped_by_sec.drop('', axis=0, level=0, inplace=True)
-        clock('Groupby seconds')
 
-        print('Groupby params', end='', flush=True)
         # Repeat the above grouping operation for the query parameters.
         gbp = df.groupby(['query_template', 'query_params']).size()
         grouped_by_params = pd.DataFrame(gbp, columns=['count'])
@@ -366,21 +395,23 @@ class Preprocessor:
         #  So we'll do this instead...
         grouped_by_params = \
             grouped_by_params[~grouped_by_params.index.isin([('', ())])]
-        clock('Groupby params')
 
-        # Set the class members. While normal Python style dictates exposing
-        # these by name, we use accessors to provide better documentation.
         self._df = df
         self._grouped_df_sec = grouped_by_sec
         self._grouped_df_params = grouped_by_params
 
 
 def main():
+    import glob
     pgfiles = []
     pgfiles.extend(glob.glob('data/extracted/simple/postgresql*.csv'))
     pgfiles.extend(glob.glob('data/extracted/extended/postgresql*.csv'))
 
     processed = Preprocessor(pgfiles)
+
+    h5file = 'qb5000_preprocessor.h5'
+    processed.get_dataframe().to_hdf(h5file, key='df')
+
     print('Debug environment, check `processed` variable.')
     breakpoint()
 

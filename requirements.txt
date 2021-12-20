@@ -1,0 +1,7 @@
+numpy
+pandas
+pandarallel
+pglast
+sklearn
+tables
+tqdm
